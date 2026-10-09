@@ -1,155 +1,222 @@
-Proposal to include Qloan Smart Contract
-Proposal
+# Proposal to include Qloan Smart Contract
+
+## Proposal
 Allow Qloan Smart Contract to be deployed on Qubic.
-Available Options
+
+## Available Options
 > Option 0: no, don't allow
+
 > Option 1: yes, allow
+
 ---
-What is Qloan?
-Qloan is a peer-to-peer lending marketplace on Qubic. It lets users borrow QU against Qubic assets (shares/tokens) as collateral, or offer QU in exchange for those assets, with terms agreed on-chain: amount, interest rate, duration, and whether collateral is transferred immediately or only on default.
+
+## What is Qloan?
+
+**Qloan** is a peer-to-peer lending marketplace on Qubic. It lets users borrow QU against Qubic assets (shares/tokens) as collateral, or offer QU in exchange for those assets, with terms agreed on-chain: amount, interest rate, duration, and whether collateral is transferred immediately or only on default.
+
 Qloan does not match orders automatically and does not price assets. Counterparties accept each other's requests. The contract enforces collateral checks, fee collection, interest accrual by epoch, repayment, and collateral seizure on expiry.
-In short: Qloan = on-chain P2P loans against Qubic assets, with epoch-based interest and automatic default handling.
+
+**In short: Qloan = on-chain P2P loans against Qubic assets, with epoch-based interest and automatic default handling.**
+
 ---
-How It Works (Step by Step)
-1. Place a request (`PlaceLoanReq`)
-Anyone can publish an IDLE request. There are two directions:
-Request type	`isLoanReq`	Who creates it	What is locked	What they want
-Loan request	`true`	Borrower	Collateral assets stay with the borrower until accept/default (counted as reserved)	QU (`price`)
-Credit request	`false`	Creditor	`price` QU is deposited into the contract	Listed assets from a borrower
+
+## How It Works (Step by Step)
+
+### 1. Place a request (`PlaceLoanReq`)
+
+Anyone can publish an **IDLE** request. There are two directions:
+
+| Request type | `isLoanReq` | Who creates it | What is locked | What they want |
+|--------------|-------------|----------------|----------------|----------------|
+| **Loan request** | `true` | Borrower | Collateral assets stay with the borrower until accept/default (counted as reserved) | QU (`price`) |
+| **Credit request** | `false` | Creditor | `price` QU is deposited into the contract | Listed assets from a borrower |
+
 Shared parameters:
-up to 2 distinct assets as collateral
-loan size `price` in QU
-interest rate from 1% to 100%
-duration from 1 to 52 epochs
-optional `privateId`: only that identity may accept the request
-`assetsToCreditor`: whether collateral is transferred to the creditor at acceptance
-Placing a request costs 100,000 QU. Excess invocation reward is refunded. Credit requests also lock `price` QU in the contract until the request is accepted, removed, or auto-expired. Up to 32,768 requests can exist at once.
-2. Accept a request (`AcceptLoanReq`)
+
+- up to **2 distinct assets** as collateral
+- loan size `price` in QU
+- interest rate from **1% to 100%**
+- duration from **1 to 52 epochs**
+- optional `privateId`: only that identity may accept the request
+- `assetsToCreditor`: whether collateral is transferred to the creditor at acceptance
+
+Placing a request costs **100,000 QU**. Excess invocation reward is refunded. Credit requests also lock `price` QU in the contract until the request is accepted or removed.
+
+### 2. Accept a request (`AcceptLoanReq`)
+
 A counterparty accepts an IDLE request they did not create (and, if the request is private, they must be `privateId`).
-Accepting a loan request (borrower already posted): the acceptor is the creditor and must send at least `price` QU. The borrower receives `price` minus the acceptance fee. If `assetsToCreditor` is set, collateral is transferred from borrower to creditor immediately.
-Accepting a credit request (creditor already posted): the acceptor is the borrower and must hold the listed assets. They receive the locked `price` minus the acceptance fee. If `assetsToCreditor` is set, collateral is transferred from borrower to creditor immediately.
-The request becomes ACTIVE. The creator cannot accept their own request.
-3. Repay (`PayLoanDebt`)
+
+- **Accepting a loan request (borrower already posted):** the acceptor is the creditor and must send at least `price` QU. The borrower receives `price` minus the acceptance fee. If `assetsToCreditor` is set, collateral is transferred from borrower to creditor immediately.
+- **Accepting a credit request (creditor already posted):** the acceptor is the borrower and must hold the listed assets. They receive the locked `price` minus the acceptance fee. If `assetsToCreditor` is set, collateral is transferred from borrower to creditor immediately.
+
+The request becomes **ACTIVE**. The creator cannot accept their own request.
+
+### 3. Repay (`PayLoanDebt`)
+
 Only the borrower can repay an ACTIVE loan by sending at least the current `debtAmount`. The creditor receives the debt in QU. If collateral was transferred to the creditor, it is returned to the borrower. The request is then removed.
-4. Default and unmatched-request cleanup (`BEGIN_EPOCH`)
+
+### 4. Default at epoch start (`BEGIN_EPOCH`)
+
 Each epoch, remaining time (`epochsLeft`) on ACTIVE loans is decremented. When `epochsLeft` reaches 0 and the loan is still ACTIVE:
-if collateral was not transferred at acceptance, it is transferred from borrower to creditor
-if collateral was already with the creditor, they keep it
-the request is removed (the creditor does not receive extra QU; they keep the collateral instead of repayment)
-Unmatched IDLE requests expire after `QLOAN_REQ_EXISTENCE_EPOCH_COUNT` (5) epochs: if `creationEpoch + 5 < current epoch`, the request is deleted. A creditor who locked `price` QU gets that principal back. The 100,000 QU placement fee is not refunded. After the scan, the request map runs `cleanupIfNeeded()`.
-5. Cancel before matching (`RemoveLoanReq`)
+
+- if collateral was **not** transferred at acceptance, it is transferred from borrower to creditor
+- if collateral was already with the creditor, they keep it
+- the request is removed (the creditor does not receive extra QU; they keep the collateral instead of repayment)
+
+### 5. Cancel before matching (`RemoveLoanReq`)
+
 The creator of an IDLE request can cancel it. A creditor gets the locked `price` QU back. The 100,000 QU placement fee is not refunded. ACTIVE loans cannot be cancelled this way.
-6. Accidental QU transfers (`POST_INCOMING_TRANSFER`)
-A plain QU transfer to the contract (`TransferType::standardTransaction`) is refunded to the sender. Procedure invocation rewards are not refunded this way: they are the intended way to pay fees, lock credit principal, and repay debt.
+
 ---
-Collateral Modes
-`assetsToCreditor`	At acceptance	While ACTIVE	On repayment	On default
-`true`	Assets move to the creditor	Creditor holds them	Assets return to the borrower	Creditor keeps them
-`false`	Assets stay with the borrower, but are reserved (cannot be reused in other Qloan deals)	Borrower still possesses them	Nothing to transfer back	Assets move to the creditor
+
+## Collateral Modes
+
+| `assetsToCreditor` | At acceptance | While ACTIVE | On repayment | On default |
+|--------------------|----------------|--------------|--------------|------------|
+| `true` | Assets move to the creditor | Creditor holds them | Assets return to the borrower | Creditor keeps them |
+| `false` | Assets stay with the borrower, but are reserved (cannot be reused in other Qloan deals) | Borrower still possesses them | Nothing to transfer back | Assets move to the creditor |
+
 `_CheckAssetsPresence` prevents double-pledging: assets already reserved in IDLE requests or in ACTIVE loans (held by the borrower, or already transferred to the creditor) cannot be used again for a new deal.
+
 ---
-Interest Model
+
+## Interest Model
+
 Interest is not charged all at once. Early repayment pays a floor; after about one third of the term, debt grows linearly toward the full agreed interest.
-At placement the contract stores:
-```text
-fullInterest = P * R / 100
-```
+
 Let:
-`P` = `price` (principal in QU)
-`R` = `interestRate` (percent, 1–100)
-`fullInterest` = full interest in QU if the loan runs to maturity
-`T` = `returnPeriodInEpochs`
-`elapsed` = `T - epochsLeft`
-Until 34% of the period has elapsed (including at creation):
+
+- `P` = `price` (principal in QU)
+- `R` = `interestRate` (percent, 1–100)
+- `T` = `returnPeriodInEpochs`
+- `elapsed` = `T - epochsLeft`
+
+**Until 34% of the period has elapsed** (including at creation):
+
 ```text
 debtAmount = P + P * R / 300
-           = P + (1/3) * fullInterest
+           = P + (1/3) * (P * R / 100)
 ```
+
 The borrower always owes at least principal plus one third of the full interest.
-From 34% elapsed onward (`BEGIN_EPOCH`, saturating add):
+
+**From 34% elapsed onward:**
+
 ```text
-debtAmount = P + fullInterest * elapsed / T
+debtAmount = P * (1 + R/100 * elapsed / T)
 ```
-At maturity (`elapsed = T`) this is `P + fullInterest` — principal plus the full agreed interest. Queries return both `fullInterest` and the current `debtAmount`.
-Example
+
+At maturity (`elapsed = T`) this is `P * (1 + R/100)` — principal plus the full agreed interest.
+
+### Example
+
 `P = 1,000,000 QU`, `R = 30%`, `T = 10 epochs`.
-When	Debt
-At start / first ~3 epochs	1,000,000 + 100,000 = 1,100,000 QU (floor = 1/3 of 300,000 interest)
-After 4 epochs (40%)	1,000,000 × (1 + 0.30 × 0.40) = 1,120,000 QU
-After 10 epochs (100%)	1,000,000 × (1 + 0.30) = 1,300,000 QU
-Acceptance fee on this deal: 15% of full interest = 15% × 300,000 = 45,000 QU. The borrower receives 1,000,000 − 45,000 = 955,000 QU.
+
+| When | Debt |
+|------|------|
+| At start / first ~3 epochs | 1,000,000 + 100,000 = **1,100,000 QU** (floor = 1/3 of 300,000 interest) |
+| After 4 epochs (40%) | 1,000,000 × (1 + 0.30 × 0.40) = **1,120,000 QU** |
+| After 10 epochs (100%) | 1,000,000 × (1 + 0.30) = **1,300,000 QU** |
+
+Acceptance fee on this deal: **15% of full interest** = 15% × 300,000 = **45,000 QU**. The borrower receives 1,000,000 − 45,000 = **955,000 QU**.
+
 ---
-Loan Request States
-State	Meaning
-`IDLE`	Posted, waiting for a counterparty. Auto-removed if still unmatched more than 5 epochs after `creationEpoch`.
-`ACTIVE`	Matched; interest accrues each epoch. Removed on repayment or default.
+
+## Loan Request States
+
+| State | Meaning |
+|-------|---------|
+| `IDLE` | Posted, waiting for a counterparty |
+| `ACTIVE` | Matched; interest accrues each epoch |
+| `PAYED` / `EXPIRED` | Reserved in the enum; the current implementation **removes** the request on repayment or default instead of leaving a terminal record |
+
 ---
-Key Parameters
-Parameter	Value	Meaning
-`QLOAN_PLACE_LOAN_REQ_FEE`	100,000 QU	Fee to post a request
-`QLOAN_ACCEPTANCE_FEE_PERCENT`	15%	Share of full interest taken at acceptance
-`QLOAN_BURN_PERCENT`	3%	Share of protocol revenue burned each epoch
-`QLOAN_QVAULT_PERCENT`	97%	Share of protocol revenue sent to QVault
-`QLOAN_MIN_LOAN_PERIOD_IN_EPOCHS`	1	Minimum duration
-`QLOAN_MAX_LOAN_PERIOD_IN_EPOCHS`	52	Maximum duration
-`QLOAN_MAX_INTEREST_RATE`	100	Maximum interest (%)
-`QLOAN_MAX_ASSETS_NUM`	2	Max distinct collateral assets per request
-`QLOAN_REQ_EXISTENCE_EPOCH_COUNT`	5	Unmatched IDLE requests expire after this many epochs
-`QLOAN_MAX_LOAN_REQS_NUM`	32,768	Max concurrent requests in state
-`QLOAN_MAX_OUTPUT_NUM`	128	Max items returned per `GetAllLoanReqs` page
+
+## Key Parameters
+
+| Parameter | Value | Meaning |
+|-----------|-------|---------|
+| `QLOAN_PLACE_LOAN_REQ_FEE` | 100,000 QU | Fee to post a request |
+| `QLOAN_ACCEPTANCE_FEE_PERCENT` | 15% | Share of **full interest** taken at acceptance |
+| `QLOAN_BURN_PERCENT` | 3% | Share of protocol revenue burned each epoch |
+| `QLOAN_QVAULT_PERCENT` | 97% | Share of protocol revenue sent to QVault |
+| `QLOAN_MIN_LOAN_PERIOD_IN_EPOCHS` | 1 | Minimum duration |
+| `QLOAN_MAX_LOAN_PERIOD_IN_EPOCHS` | 52 | Maximum duration |
+| `QLOAN_MAX_INTEREST_RATE` | 100 | Maximum interest (%) |
+| `QLOAN_MAX_ASSETS_NUM` | 2 | Max distinct collateral assets per request |
+| `QLOAN_MAX_LOAN_REQS_NUM` | 1,024 | Max concurrent requests in state |
+| `QLOAN_MAX_OUTPUT_NUM` | 128 | Max items returned by list queries |
+
 ---
-Fee Structure and Distribution
-Protocol fees
-Placement fee: 100,000 QU per `PlaceLoanReq` (loan or credit). Not refunded on cancel.
-Acceptance fee: `15%` of `price × interestRate / 100`, deducted from the QU the borrower receives at match.
-End-of-epoch distribution (`END_EPOCH`)
+
+## Fee Structure and Distribution
+
+### Protocol fees
+
+1. **Placement fee:** 100,000 QU per `PlaceLoanReq` (loan or credit). Not refunded on cancel.
+2. **Acceptance fee:** `15%` of `price × interestRate / 100`, deducted from the QU the borrower receives at match.
+
+### End-of-epoch distribution (`END_EPOCH`)
+
 Undistributed protocol revenue (`earnedAmount - distributedAmount`) is split:
-3% burned
-97% transferred to the QVault smart contract
+
+- **3%** burned
+- **97%** transferred to the **QVault** smart contract
+
 This follows the same QVault recirculation pattern used by contracts such as QBond: revenue supports `$QVAULT` / `$QCAP` holders and further ecosystem burns via QVault reinvestment.
+
 Qloan itself does not pay IPO shareholders directly.
+
 ---
-Qloan Key Features
-Feature	Description
-Two-sided marketplace	Borrowers post loan requests; creditors post credit offers with QU locked
-Asset-backed loans	Up to two Qubic assets per deal as collateral
-Public or private deals	Optional `privateId` restricts who may accept
-Immediate or deferred collateral	`assetsToCreditor` chooses possession at match vs seizure only on default
-Epoch interest	Stores `fullInterest`; floor of 1/3 interest, then linear accrual after 34% of the term
-Double-pledge protection	Reserved assets in other IDLE/ACTIVE deals cannot be reused
-Atomic multi-asset transfer	Failed transfers roll back already-moved assets in the same call
-Share management	Free (non-reserved) shares can be released to another managing contract
-Stray QU refund	Standard transfers to the contract are returned to the sender
-Lookup by id	`GetLoanReqById` returns a single request without scanning the full list
-Paginated listing	`GetAllLoanReqs` skips `offset` entries and returns up to 128 requests
-IDLE auto-expiry	Unmatched requests are removed after 5 epochs; locked credit principal is refunded
-QVault + burn	Protocol fees: 97% to QVault, 3% burned
+
+## Qloan Key Features
+
+| Feature | Description |
+|---------|-------------|
+| **Two-sided marketplace** | Borrowers post loan requests; creditors post credit offers with QU locked |
+| **Asset-backed loans** | Up to two Qubic assets per deal as collateral |
+| **Public or private deals** | Optional `privateId` restricts who may accept |
+| **Immediate or deferred collateral** | `assetsToCreditor` chooses possession at match vs seizure only on default |
+| **Epoch interest** | Floor of 1/3 interest, then linear accrual after 34% of the term |
+| **Double-pledge protection** | Reserved assets in other IDLE/ACTIVE deals cannot be reused |
+| **Atomic multi-asset transfer** | Failed transfers roll back already-moved assets in the same call |
+| **Share management** | Unused shares can be released to another managing contract |
+| **QVault + burn** | Protocol fees: 97% to QVault, 3% burned |
+
 ---
-Public Procedures
-ID	Procedure	Description
-1	`PlaceLoanReq`	Create an IDLE loan or credit request. Validates period, price, rate, unique assets, capacity (max 32,768). Loan requests require the placement fee and sufficient free collateral. Credit requests lock `price + fee` QU.
-2	`RemoveLoanReq`	Creator cancels an IDLE request. Creditor is refunded locked `price`. Placement fee is kept.
-3	`AcceptLoanReq`	Match an IDLE request. Creditor funds `price` (loan request) or borrower supplies collateral (credit request). Deducts the 15% acceptance fee, optionally transfers collateral, sets state to ACTIVE.
-4	`TransferShareManagementRights`	Release shares managed by Qloan to another contract. Only amounts the invocator actually holds as Qloan collateral are reserved (same rule as `_CheckAssetsPresence`): borrower-held assets in IDLE requests or in ACTIVE loans with `assetsToCreditor == false`, and creditor-held assets in ACTIVE loans with `assetsToCreditor == true`. Requires a non-zero invocation reward; unused fee (`invocationReward - releaseResult`) is refunded. `INVALID_AMOUNT` is treated as failure and fully refunded.
-5	`PayLoanDebt`	Borrower repays current `debtAmount`. Creditor is paid; collateral is returned if it had been transferred; request is deleted.
+
+## Public Procedures
+
+| ID | Procedure | Description |
+|----|-----------|-------------|
+| 1 | `PlaceLoanReq` | Create an IDLE loan or credit request. Validates period, price, rate, unique assets, capacity (max 1024). Loan requests require the placement fee and sufficient free collateral. Credit requests lock `price + fee` QU. |
+| 2 | `RemoveLoanReq` | Creator cancels an IDLE request. Creditor is refunded locked `price`. Placement fee is kept. |
+| 3 | `AcceptLoanReq` | Match an IDLE request. Creditor funds `price` (loan request) or borrower supplies collateral (credit request). Deducts the 15% acceptance fee, optionally transfers collateral, sets state to ACTIVE. |
+| 4 | `TransferShareManagementRights` | Release shares managed by Qloan to another contract, excluding amounts reserved in the invocator's IDLE/ACTIVE loans. Requires a non-zero invocation reward (used as the release fee; remainder is refunded). |
+| 5 | `PayLoanDebt` | Borrower repays current `debtAmount`. Creditor is paid; collateral is returned if it had been transferred; request is deleted. |
+
 On invalid input, procedures refund the invocation reward and leave state unchanged.
+
 ---
-Public Functions (read-only)
-ID	Function	Description
-1	`GetAllLoanReqs`	Returns up to 128 requests of any state, starting after `offset` entries. Includes `reqId`, parties, assets, price, rate, `fullInterest`, debt, remaining epochs, and `assetsToCreditor`.
-2	`GetUserActiveLoanReqs`	Same shape, filtered to ACTIVE loans where `userId` is borrower or creditor.
-3	`GetUserDebt`	Sum of `debtAmount` over all ACTIVE loans of `userId` as borrower.
-4	`GetFeesInfo`	Returns acceptance fee %, burn fee (basis 10000), plus cumulative `earnedAmount`, `distributedAmount`, `burnedAmount`, and `toQvaultAmount`.
-5	`GetLoanReqById`	Returns a single `LoanOutputInfo` for `reqId`, or an empty struct if the id does not exist.
+
+## Public Functions (read-only)
+
+| ID | Function | Description |
+|----|----------|-------------|
+| 1 | `GetAllLoanReqs` | Returns up to 128 requests of any state (IDLE and ACTIVE), including `reqId`, parties, assets, price, rate, debt, remaining epochs, and `assetsToCreditor`. |
+| 2 | `GetUserActiveLoanReqs` | Same shape, filtered to ACTIVE loans where `userId` is borrower or creditor. |
+| 3 | `GetUserDebt` | Sum of `debtAmount` over all ACTIVE loans of `userId` as borrower. |
+| 4 | `GetFeesInfo` | Returns acceptance fee %, burn fee (basis 10000), plus cumulative `earnedAmount`, `distributedAmount`, `burnedAmount`, and `toQvaultAmount`. |
+
 ---
-Lifecycle Diagram
+
+## Lifecycle Diagram
+
 ```text
 PlaceLoanReq
      │
      ▼
    IDLE  ──RemoveLoanReq──►  (deleted; creditor refunded if they posted QU)
-     │
-     ├── BEGIN_EPOCH: unmatched > 5 epochs ──► deleted (creditor refunded if they posted QU)
      │
      │ AcceptLoanReq
      ▼
@@ -160,25 +227,16 @@ PlaceLoanReq
      └── BEGIN_EPOCH: epochsLeft == 0
               └── collateral to creditor (if still with borrower) ──► deleted
 ```
+
 ---
-Internal Helpers and Epoch Hooks
-Name	Type	Role
-`_TransferAssetsFromTo`	Private procedure	Moves all collateral assets from `from` to `to`. On failure of asset n, previously transferred assets 0..n-1 are moved back.
-`_CheckAssetsPresence`	Private function	Confirms the owner still has enough free shares after subtracting amounts reserved in other Qloan deals.
-`_FillLoanReqForOutput`	Private function	Maps stored `LoanReqInfo` plus `reqId` into `LoanOutputInfo` for queries (including `fullInterest`).
-`BEGIN_EPOCH`	System hook	Decrements `epochsLeft` on ACTIVE loans, updates `debtAmount` from `fullInterest` after 34% elapsed, seizes collateral on default, expires unmatched IDLE requests after 5 epochs (refunding locked credit principal), then `cleanupIfNeeded()` on the request map.
-`END_EPOCH`	System hook	Burns 3% and sends 97% of new protocol revenue to QVault.
-`INITIALIZE`	System hook	Starts request ids at 1; zeroes counters.
-`PRE_ACQUIRE_SHARES`	System hook	Allows incoming share transfers (`allowTransfer = true`).
-`POST_INCOMING_TRANSFER`	System hook	Refunds standard QU transfers to the sender. Invocation rewards used by procedures are kept.
----
-Technical Implementation
-Please find the current implementation details below.
-From: qubic/core#985
-<details>
-<summary>Source code</summary>
+
+## Technical Implementation
+
+Please find the current implementation details below:
+
 ```c++
 using namespace QPI;
+
 
 constexpr uint64 QLOAN_PLACE_LOAN_REQ_FEE = 100000;
 
