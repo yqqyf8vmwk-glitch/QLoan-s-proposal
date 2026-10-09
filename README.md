@@ -12,7 +12,7 @@ Allow Qloan Smart Contract to be deployed on Qubic.
 
 ## What is Qloan?
 
-**Qloan** is a peer-to-peer lending marketplace on Qubic. It lets users borrow QU against Qubic assets (shares/tokens) as collateral, or offer QU in exchange for those assets, with terms agreed on-chain: amount, interest rate, duration, and whether collateral is transferred immediately or only on default. Asset transfer allows, among other things, to choose which party will receive the SC/token dividends. As long as the loan is active, the asset remains managed by Qloan and it is impossible to change the management rights or transfer it to another wallet.
+**Qloan** is a peer-to-peer lending marketplace on Qubic. It lets users borrow QU against Qubic assets (shares/tokens) as collateral, or offer QU in exchange for those assets, with terms agreed on-chain: amount, interest rate, duration, and whether collateral is transferred immediately or only on default. Asset transfer allows, among other things, to choose which party will receive the SC/token dividends.
 
 Qloan does not match orders automatically and does not price assets. Counterparties accept each other's requests. The contract enforces collateral checks, fee collection, interest accrual by epoch, repayment, and collateral seizure on expiry.
 
