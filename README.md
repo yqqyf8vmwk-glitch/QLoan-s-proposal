@@ -150,7 +150,7 @@ Acceptance fee on this deal: **15% of full interest** = 15% × 300,000 = **45,00
 |-----------|-------|---------|
 | `QLOAN_PLACE_LOAN_REQ_FEE` | 100,000 QU | Fee to post a request |
 | `QLOAN_ACCEPTANCE_FEE_PERCENT` | 15% | Share of **full interest** taken at acceptance |
-| `QLOAN_SHAREHOLDERS_PERCENT` | 1% | Share of protocol revenue burned each epoch |
+| `QLOAN_SHAREHOLDERS_PERCENT` | 1% | Share of protocol revenue sent to Shareholders each epoch |
 | `QLOAN_BURN_PERCENT` | 2% | Share of protocol revenue burned each epoch |
 | `QLOAN_QVAULT_PERCENT` | 97% | Share of protocol revenue sent to QVault |
 | `QLOAN_MIN_LOAN_PERIOD_IN_EPOCHS` | 1 | Minimum duration |
