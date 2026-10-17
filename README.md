@@ -150,7 +150,8 @@ Acceptance fee on this deal: **15% of full interest** = 15% × 300,000 = **45,00
 |-----------|-------|---------|
 | `QLOAN_PLACE_LOAN_REQ_FEE` | 100,000 QU | Fee to post a request |
 | `QLOAN_ACCEPTANCE_FEE_PERCENT` | 15% | Share of **full interest** taken at acceptance |
-| `QLOAN_BURN_PERCENT` | 3% | Share of protocol revenue burned each epoch |
+| `QLOAN_SHAREHOLDERS_PERCENT` | 1% | Share of protocol revenue burned each epoch |
+| `QLOAN_BURN_PERCENT` | 2% | Share of protocol revenue burned each epoch |
 | `QLOAN_QVAULT_PERCENT` | 97% | Share of protocol revenue sent to QVault |
 | `QLOAN_MIN_LOAN_PERIOD_IN_EPOCHS` | 1 | Minimum duration |
 | `QLOAN_MAX_LOAN_PERIOD_IN_EPOCHS` | 52 | Maximum duration |
@@ -280,7 +281,8 @@ using namespace QPI;
 constexpr uint64 QLOAN_PLACE_LOAN_REQ_FEE = 100000;
 
 constexpr uint64 QLOAN_ACCEPTANCE_FEE_PERCENT = 15;
-constexpr uint64 QLOAN_BURN_PERCENT = 300; // 3%
+constexpr uint64 QLOAN_BURN_PERCENT = 200; // 2%
+constexpr uint64 QLOAN_SHAREHOLDERS_PERCENT = 100; // 1%
 constexpr uint64 QLOAN_QVAULT_PERCENT = 9700; // 97%
 
 constexpr uint64 QLOAN_MIN_LOAN_PERIOD_IN_EPOCHS = 1;
@@ -367,6 +369,7 @@ struct QLOAN : public ContractBase
         uint64 _distributedAmount;
 
         // These two mostly for debug purposes
+        uint64 _shareholdersAmount;
         uint64 _burnedAmount;
         uint64 _toQvaultAmount;
     };
@@ -1110,10 +1113,10 @@ public:
 
         uint64 earnedAmount;
         uint64 distributedAmount;
+        uint64 shareholdersAmount;
         uint64 burnedAmount;
         uint64 toQvaultAmount;
     };
-
 
     PUBLIC_FUNCTION(GetFeesInfo)
     {
@@ -1122,6 +1125,7 @@ public:
 
         output.earnedAmount = state.get()._earnedAmount;
         output.distributedAmount = state.get()._distributedAmount;
+        output.shareholdersAmount = state.get()._shareholdersAmount;
         output.burnedAmount = state.get()._burnedAmount;
         output.toQvaultAmount = state.get()._toQvaultAmount;
     }
@@ -1272,20 +1276,27 @@ public:
     {
         uint64 amountToBurn;
         uint64 amountToQvault;
+        uint64 amountToShareholders;
     };
 
     END_EPOCH_WITH_LOCALS()
     {
-        locals.amountToBurn = div(smul((state.get()._earnedAmount - state.get()._distributedAmount), QLOAN_BURN_PERCENT), 10000ULL);
-        locals.amountToQvault = div(smul((state.get()._earnedAmount - state.get()._distributedAmount), QLOAN_QVAULT_PERCENT), 10000ULL);
-
         if (state.get()._earnedAmount > state.get()._distributedAmount)
         {
+            locals.amountToShareholders = div(smul((state.get()._earnedAmount - state.get()._distributedAmount), QLOAN_SHAREHOLDERS_PERCENT), 10000ULL);
+            locals.amountToQvault = div(smul((state.get()._earnedAmount - state.get()._distributedAmount), QLOAN_QVAULT_PERCENT), 10000ULL);
+            locals.amountToBurn = state.get()._earnedAmount - state.get()._distributedAmount - locals.amountToQvault - locals.amountToShareholders + QPI::mod(locals.amountToShareholders, 676ULL);
+
             qpi.burn(locals.amountToBurn);
             qpi.transfer(id(QVAULT_CONTRACT_INDEX, 0, 0, 0), locals.amountToQvault);
             state.mut()._distributedAmount += locals.amountToBurn;
             state.mut()._distributedAmount += locals.amountToQvault;
 
+            if (locals.amountToShareholders >= 676ULL && qpi.distributeDividends(div(locals.amountToShareholders, 676ULL)))
+            {
+                state.mut()._shareholdersAmount += locals.amountToShareholders - QPI::mod(locals.amountToShareholders, 676ULL);
+                state.mut()._distributedAmount += div(locals.amountToShareholders, 676ULL) * 676ULL;
+            }
             state.mut()._burnedAmount += locals.amountToBurn;
             state.mut()._toQvaultAmount += locals.amountToQvault;
         }
@@ -1294,12 +1305,6 @@ public:
     INITIALIZE()
     {
         state.mut()._currentLoanIndex = 1;
-        state.mut()._totalReqs = 0;
-
-        state.mut()._earnedAmount = 0;
-        state.mut()._distributedAmount = 0;
-        state.mut()._burnedAmount = 0;
-        state.mut()._toQvaultAmount = 0;
     }
 
     PRE_ACQUIRE_SHARES()
